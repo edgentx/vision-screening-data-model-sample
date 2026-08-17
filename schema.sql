@@ -10,9 +10,10 @@ CREATE TABLE district (
 
 CREATE TABLE campus (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  district_id   uuid NOT NULL REFERENCES district(id),
+  district_id   uuid NOT NULL,
   campus_number text NOT NULL UNIQUE,
-  name          text NOT NULL
+  name          text NOT NULL,
+  CONSTRAINT fk_campus_district_id FOREIGN KEY (district_id) REFERENCES district(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE student (
@@ -25,19 +26,22 @@ CREATE TABLE student (
 
 CREATE TABLE enrollment (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id  uuid NOT NULL REFERENCES student(id),
-  campus_id   uuid NOT NULL REFERENCES campus(id),
+  student_id  uuid NOT NULL,
+  campus_id   uuid NOT NULL,
   entry_date  date NOT NULL,
   exit_date   date,                          -- null while active; TREx-triggered on transfer
-  grade_level text NOT NULL
+  grade_level text NOT NULL,
+  CONSTRAINT fk_enrollment_student_id FOREIGN KEY (student_id) REFERENCES student(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_enrollment_campus_id FOREIGN KEY (campus_id) REFERENCES campus(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE consent (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id     uuid NOT NULL REFERENCES student(id),
+  student_id     uuid NOT NULL,
   status         text NOT NULL CHECK (status IN ('opt_in','opt_out')),   -- SB 12 (89R)
   effective_date date NOT NULL,
-  recorded_by    text NOT NULL
+  recorded_by    text NOT NULL,
+  CONSTRAINT fk_consent_student_id FOREIGN KEY (student_id) REFERENCES student(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE screener (
@@ -49,8 +53,8 @@ CREATE TABLE screener (
 
 CREATE TABLE screening (
   id                           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  enrollment_id                uuid NOT NULL REFERENCES enrollment(id),
-  screener_id                  uuid NOT NULL REFERENCES screener(id),
+  enrollment_id                uuid NOT NULL,
+  screener_id                  uuid NOT NULL,
   screening_date               date NOT NULL,
   age_on_screening_date        int  NOT NULL,
   screening_type               text NOT NULL,
@@ -64,64 +68,74 @@ CREATE TABLE screening (
   CONSTRAINT screening_complete_requires_checklist
     CHECK (status <> 'complete' OR prescreen_checklist_complete),
   CONSTRAINT unable_requires_reason
-    CHECK (status <> 'unable_to_screen' OR unable_reason_code IS NOT NULL)
+    CHECK (status <> 'unable_to_screen' OR unable_reason_code IS NOT NULL),
+  CONSTRAINT fk_screening_enrollment_id FOREIGN KEY (enrollment_id) REFERENCES enrollment(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_screening_screener_id FOREIGN KEY (screener_id) REFERENCES screener(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE screening_result (
   id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  screening_id              uuid NOT NULL UNIQUE REFERENCES screening(id),
+  screening_id              uuid NOT NULL UNIQUE,
   acuity_od                 text NOT NULL,    -- right eye, approved format
   acuity_os                 text NOT NULL,    -- left eye, approved format
   corrective_lenses_used    boolean NOT NULL,
   signs_symptoms_observed   boolean NOT NULL,
   outcome                   text NOT NULL CHECK (outcome IN ('pass','fail','refer')),
-  outcome_threshold_version text NOT NULL     -- version-controlled outcome thresholds
+  outcome_threshold_version text NOT NULL,  -- version-controlled outcome thresholds
+  CONSTRAINT fk_screening_result_screening_id FOREIGN KEY (screening_id) REFERENCES screening(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE screening_exception (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  screening_id  uuid NOT NULL REFERENCES screening(id),
+  screening_id  uuid NOT NULL,
   exception_code text NOT NULL,
-  documentation  text NOT NULL
+  documentation  text NOT NULL,
+  CONSTRAINT fk_screening_exception_screening_id FOREIGN KEY (screening_id) REFERENCES screening(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE referral (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  screening_id  uuid NOT NULL REFERENCES screening(id),
+  screening_id  uuid NOT NULL,
   reason        text NOT NULL,
   referred_date date NOT NULL,
-  status        text NOT NULL CHECK (status IN ('open','notified','outcome_received','closed'))
+  status        text NOT NULL CHECK (status IN ('open','notified','outcome_received','closed')),
+  CONSTRAINT fk_referral_screening_id FOREIGN KEY (screening_id) REFERENCES screening(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE follow_up (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  referral_id  uuid NOT NULL REFERENCES referral(id),
+  referral_id  uuid NOT NULL,
   contact_date date NOT NULL,
   channel      text NOT NULL,
-  outcome      text NOT NULL
+  outcome      text NOT NULL,
+  CONSTRAINT fk_follow_up_referral_id FOREIGN KEY (referral_id) REFERENCES referral(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE treatment (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  referral_id   uuid NOT NULL REFERENCES referral(id),
+  referral_id   uuid NOT NULL,
   kind          text NOT NULL CHECK (kind IN ('recommended','received')),
   description   text NOT NULL,
-  recorded_date date NOT NULL
+  recorded_date date NOT NULL,
+  CONSTRAINT fk_treatment_referral_id FOREIGN KEY (referral_id) REFERENCES referral(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE certification (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  campus_id    uuid NOT NULL REFERENCES campus(id),
+  campus_id    uuid NOT NULL,
   school_year  text NOT NULL,
   status       text NOT NULL CHECK (status IN ('draft','certified','reopened')),
   certified_by text,
-  certified_at timestamptz
+  certified_at timestamptz,
+  CONSTRAINT fk_certification_campus_id FOREIGN KEY (campus_id) REFERENCES campus(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE audit_event (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   entity_type  text NOT NULL,
-  entity_id    uuid NOT NULL,
+  entity_id    uuid NOT NULL,          -- deliberately no FK: polymorphic across entity_type;
+                                        -- integrity is enforced by the writing service, and audit
+                                        -- rows must survive the deletion of what they describe
   action       text NOT NULL,
   actor        text NOT NULL,
   at           timestamptz NOT NULL DEFAULT now(),
